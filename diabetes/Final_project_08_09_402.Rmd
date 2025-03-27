@@ -1,0 +1,796 @@
+
+---
+title: "Diabetes Project"
+author: 'Aliasghar Ahmadi Katouli '
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+___
+## Loading Necessary Libraries
+
+```{r message=FALSE}
+
+library(readr)
+library(tidyverse)
+library(tidymodels)
+library(mlbench)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(kknn)
+library(pROC)
+library(randomForest)
+install.packages("other_packages_you_may_need")
+```
+
+___
+### Read and loading dataset
+
+Here, we just receive the data set from this link <https://d-learn.ir/diabetes_012_health_indicators_brfss2015/>
+and the dataset include 253680 observations with 22 features. 
+```{r message=FALSE}
+#Diabetes = read_csv('https://d-learn.ir/wp-content/uploads/2023/05/diabetes_012_health_indicators_BRFSS2015.csv')
+Diabetes = read_csv('D://diabetes_012_health_indicators_BRFSS2015.csv')
+```
+
+___
+## Data Cleaning
+
+#### Check the NA values in data set
+
+  In this data set there is not any NA's , but if there is any we can remove them by using **na.omit()** function, However from data summary we can observe that the mean and median of two features **MentHlth** and **PhysActivity** are significantly different. In the **MenHlth** and **PhysHleth** columns there are Zero value that we can omit them, or instead of zero we can put the mean of value in the column.Also there are (#23899) duplicated rows in data set and we can remove them. Therefore, now the data set has 229781 rows.
+```{r}
+# check summary statistic of data set
+summary(Diabetes)
+# check the number of NA's 
+sum(is.na(Diabetes))
+# check the number of duplicated rows and remove them
+sum(duplicated(Diabetes))
+Diabetes = unique(Diabetes)
+# calculate the mean of non zero values of MentHlth and replace with zero 
+mean_non_zero <-round(mean(Diabetes$MentHlth[Diabetes$MentHlth != 0]))
+Diabetes$MentHlth[Diabetes$MentHlth == 0] <- mean_non_zero
+table(Diabetes$MentHlth)
+# calculate the mean of non zero values of PhysHlth and replace with zero
+mean_non_zero2 <-round(mean(Diabetes$PhysHlth[Diabetes$PhysHlth != 0]))
+# replace mean value
+Diabetes$PhysHlth[Diabetes$PhysHlth == 0] <- mean_non_zero2
+table(Diabetes$PhysHlth)
+```
+#### Correlation
+  Check the correlation between variables(features): no strong correlation, no strong linear relationship
+not feature selection because there is not strong correlation between features. If there was a strong correlation between features we may use one of them in our modeling. 
+
+```{r}
+cor <- cor(Diabetes)
+cor
+```
+___
+#Question 1:
+Descriptive Analysis:
+
+```{r}
+# observe the behavior of the response variable to the features by plot
+
+
+Diabetes_plot <- data.frame(Diabetes[c("Diabetes_012","BMI","GenHlth", 
+                                                                "MentHlth", "PhysHlth","Age","Education", "Income")])  
+
+plot(Diabetes_plot)
+
+```
+
+```{r}
+colnames(Diabetes)
+
+#histogram of all features for each category 
+
+features <- c("HighBP", "HighChol", "CholCheck", "BMI", "Smoker", "Stroke",
+              "HeartDiseaseorAttack", "PhysActivity" , "Fruits","Veggies", 
+              "HvyAlcoholConsump","AnyHealthcare", "NoDocbcCost", "GenHlth", 
+              "MentHlth", "PhysHlth", "DiffWalk" ,"Sex" ,"Age","Education", "Income")
+
+
+#for features are not binary:
+
+#features <- c("BMI","GenHlth", 
+#               "MentHlth", "PhysHlth","Age","Education", "Income")
+
+for(feature in features ){
+  
+  plot <- Diabetes %>%
+    ggplot(aes(x =.data[[feature]], fill = as.factor(Diabetes_012))) +
+    geom_histogram(bins = 30) +
+    labs(title = paste("Histogram of", feature, "by Diabetes Status"),
+         x = feature, y = "Frequency") +
+    scale_fill_manual(values = c("0" = "blue", "1" = "green", "2" = "red"))
+  ggsave( filename = paste0("histogram_", feature, ".png"),plot = plot ,device = "png",
+          path ="/Users/aliahmadi/Desktop/image/" , width = 100, height = 120, units = "mm")
+  
+  #you need to set the path based on your file systems
+  
+  
+  print(plot)
+  
+}
+```
+
+Visually exploring the distribution of each feature of the dataset concerning diabetes status
+
+
+#Descriptive Statistics
+
+```{r}
+#feature selection 
+
+features2 <- c("BMI", "GenHlth", "MentHlth", "PhysHlth", "Age", "Education", "Income")
+
+#define categories in Diabetes_012
+categories <- unique(Diabetes$Diabetes_012)
+
+#data frame
+stats <- data.frame()
+
+
+for (feature in features2) {
+  
+  for (category in categories) {
+    result <- Diabetes %>%
+      filter(Diabetes_012 == category) %>%
+      summarise(
+        Category = category,
+        Feature = feature,
+        Mean = mean(.data[[feature]]),
+        SD = sd(.data[[feature]]),
+        Median = median(.data[[feature]]),
+        Min = min(.data[[feature]]),
+        Max = max(.data[[feature]])
+      )
+    
+    
+    stats <- rbind(stats, result)
+  }
+}
+
+
+print(stats)
+
+```
+
+Analyzing how the selected features vary across different categories .The mean and median of each feature in each category are close to each other.These features may not show strong skewness or outliers within each category, because their mean and median are close to each other.
+___
+#Question 2:
+Are the balance and number of target variable classes (diabetes and non-diabetes) close to each other? What effect will the imbalance of target variable classes have on modeling?
+ To answer this firstly, we will find the classes of target variable with **grop_by** or **table** function.then we visualize it to have better understanding.
+
+```{r}
+# find the classes of target variable
+Diabetes%>%
+  group_by(Diabetes_012)%>%
+  summarise(n = n())
+```
+
+#### Plot the histogram of Response Variable ( Diabetes_012)
+
+```{r echo=FALSE}
+ggplot(Diabetes,aes(Diabetes_012))+geom_histogram(bins = 3)+
+  labs(title = 'Histogram of Diabetes Frequency',x = 'Diabetes', y = 'Frequency')+
+  theme_classic()
+```
+
+As we can see in histogram there is imbalance in response or independent variable in this data set. the 0 class possess high frequency which represents No diabetes. this issue poses a serious challenge to predictive model because learning algorithms are biased toward the **majority class** and prediction models tend to favor the majority class and impact the accuracy of the model. we don’t have the required level of data to develop an understanding of what may lead to disease. Balancing data gives us the same amount of information to help predict each class and therefore gives a better idea of how to respond to test data.
+
+___
+#Question 3:
+  Based on previous question, is it reasonable to combine the diabetes and predicates class ? If yes, merge them for the rest of question?
+    By combining the two classes of pre diabetes and No diabetes, still we can see there is **imbalance** in target variable
+
+```{r}
+Diabetes_3 <- Diabetes %>%
+  mutate(Diabetes_012 = ifelse(Diabetes_012 %in% c(1, 2), 1, Diabetes_012))
+table(Diabetes_3$Diabetes_012)
+```
+
+___
+___
+
+#Question 4: 
+  Suggested methods to tackle the imbalance data set? 
+  There are different methods in the literature, however we just cover three of them including  under-sampling,Copy rows of minority labels data and SMOTE.
+
+  
+#### **Method 1. Under-sampling**
+  Delete some data rows from majority class in data set. However,this method is hard to use when we do not have enough data from each target class. Therefore, the following codes can balance the target value. 
+  
+```{r}
+indice_class_0 = which(Diabetes$Diabetes_012 == 0)
+indice_to_remove = sample(indice_class_0,160000)
+balanced_data1 = Diabetes[-indice_to_remove,]
+table(balanced_data1$Diabetes_012)
+hist(balanced_data1$Diabetes_012,breaks = 2)
+```
+
+#### **Method 2. Copy rows of minority labels data**
+  In this case we will copy rows from minor class which is 2 or diabetes. 
+
+```{r}
+indice_class_2 = which(Diabetes$Diabetes_012 == 2)
+indice_to_replicate = sample(indice_class_2,160000,replace = T)
+balanced_data2 = rbind(Diabetes,Diabetes[indice_to_replicate,])
+table(balanced_data2$Diabetes_012)
+```
+
+#### **Method 3. SMOTE-Synthetic Minority Oversampling Technique**
+  Synthetically generate new data based on implications of old data. Here we use **smotefamily** library and the method use KNN algorithm.
+```{r}
+library(smotefamily)
+balanced_data3 <- SMOTE(Diabetes,Diabetes$Diabetes_012,K =3)
+balance_diabete = balanced_data3$data
+#remove the last column 'class' which is equal to Diabetes_012
+balance_diabete = balance_diabete[-c(23)]
+table(balance_diabete$Diabetes_012)
+```
+___
+___
+
+
+#Question 5:
+Find a classification model for diabetes and evaluate the model on train,test,validation data. 
+In order to do this, for each classification method, we split the data set in three categories, model the data and then evaluate it. 
+
+## **Train-Validate-Test split**
+Here, we split the data into three sets which are train, validation, test. **initial_validation_split** function works fine. 
+```{r}
+# Level the response variable
+Diabetes_3$Diabetes_012 <- factor(Diabetes_3$Diabetes_012, levels = c(0, 1))
+
+# create training, testing, validation for classification model
+# 70% of the data is allocated to training, and 20% is allocated to validation, which leaves 10% for testing
+diabetes_split5 = initial_validation_split(Diabetes_3,prop = c(0.7,0.2),
+                                           strata = Diabetes_012)
+Diabetes_train5 = diabetes_split5%>%
+  training()
+
+Diabetes_validate5 = diabetes_split5%>%
+  validation()
+
+Diabetes_test5 = diabetes_split5%>%
+  testing()
+
+```
+
+## **Modelling the data**
+the first model is logistic regression for classification. Here, we use **logistic_reg** function and set the computational engine for fitting. **set_mode** function can define what type of modelling we are applying such as classification or regression.finally we fit the model by train data that was created in last step.
+
+### Logistic Regression
+
+#### Create the model
+```{r}
+
+# Create a logistic regression model
+LR_model2 <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# Fit the model to the training data
+fitted_logistic_model2 <- fit(LR_model2, Diabetes_012 ~ ., data = Diabetes_train5)
+```
+
+#### Prediction
+After training the model, now we can predict new observation from our test data. **predict** can handle the issue and **type** can help us to set the target value into two class or produce a probability of each class. 
+```{r}
+# Make predictions on the test data
+pred_LR2_tes <- predict(fitted_logistic_model2, new_data = Diabetes_test5, type = "class")
+table(pred_LR2_tes)
+
+
+
+#make probability
+pred_proba_LR_tes <- predict(fitted_logistic_model2,
+                             new_data = Diabetes_test5,
+                             type = "prob")
+
+
+diabetes_results_LR <- Diabetes_test5 %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_LR2_tes, pred_proba_LR_tes)
+```
+#### Model Evaluation
+```{r}
+
+#model evaluation
+# Confusion Matrix
+conf_mat(diabetes_results_LR, truth = Diabetes_012, estimate = .pred_class)   
+
+custom_metrics = metric_set(accuracy,sens)
+custom_metrics(diabetes_results_LR,truth = Diabetes_012,estimate = .pred_class)
+
+roc_LR2  <- roc(diabetes_results_LR$Diabetes_012, as.numeric(diabetes_results_LR$.pred_class))
+
+plot(roc_LR2, main = "ROC Curve")
+
+#make prediction on the validation data
+
+pred_LR_val <- predict(fitted_logistic_model2, new_data = Diabetes_validate5, type = "class")
+table(pred_LR_val)
+
+pred_proba_LR_val <- predict(fitted_logistic_model2,
+                             new_data = Diabetes_validate5,
+                             type = "prob")
+
+
+diabetes_results_LR_val <- Diabetes_validate5 %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_LR_val, pred_proba_LR_val)
+
+
+conf_mat(diabetes_results_LR_val, truth = Diabetes_012, estimate = .pred_class) 
+
+custom_metrics = metric_set(accuracy,sens)
+custom_metrics(diabetes_results_LR_val,truth = Diabetes_012,estimate = .pred_class)
+
+roc_val <- roc(diabetes_results_LR_val$Diabetes_012, as.numeric(diabetes_results_LR_val$.pred_class))
+
+plot(roc_val, main = "ROC Curve")
+
+```
+
+
+###KNN model
+#### Create the model
+```{r}
+
+KNN_model <- nearest_neighbor(neighbors = 7) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+
+fitted_KNN_model <- fit(KNN_model, Diabetes_012~., data = Diabetes_train5)   # Fit the model
+```
+
+#### Prediction
+```{r}
+pred_KNN_tes <- predict(fitted_KNN_model,
+                        new_data = Diabetes_test5,
+                        type = "class")
+
+pred_KNN_tes[1:5,]
+
+
+diabetes_results_KNN_tes <- Diabetes_test5 %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_KNN_tes)
+
+diabetes_results_KNN_tes[1:5, ]
+```
+
+#### Evaluation
+
+```{r}
+# Confusion Matrix 
+conf_mat(diabetes_results_KNN_tes, truth = Diabetes_012, estimate = .pred_class)     
+
+custom_metrics(diabetes_results_KNN_tes,truth = Diabetes_012,estimate = .pred_class)
+
+
+#predict on the validation datasets
+
+pred_KNN_val <- predict(fitted_KNN_model,
+                        new_data = Diabetes_validate5,
+                        type = "class")
+
+
+
+diabetes_results_KNN_val <- Diabetes_validate5 %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_KNN_val)
+
+diabetes_results_KNN_val[1:5, ]
+
+conf_mat(diabetes_results_KNN_val, truth = Diabetes_012, estimate = .pred_class)
+custom_metrics(diabetes_results_KNN_val,truth = Diabetes_012,estimate = .pred_class)
+
+roc_val_knn <- roc(diabetes_results_KNN_val$Diabetes_012, as.numeric(diabetes_results_KNN_val$.pred_class))
+
+plot(roc_val_knn, main = "ROC Curve")
+
+```
+
+###Random forest 
+
+```{r}
+
+#for 600 tree
+RF_model <- rand_forest(
+  trees = 600) %>% 
+  set_engine("randomForest") %>% 
+  set_mode("classification")
+
+fitted_RF_model5 <- fit(RF_model, Diabetes_012~., data = Diabetes_train5)   # Fit the model
+
+## Class prediction
+pred_RF_tes <- predict(fitted_RF_model5,
+                       new_data = Diabetes_test5,
+                       type = "class")
+
+pred_RF_tes[1:5,]
+
+
+diabetes_results_RF_tes <- Diabetes_test5 %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_RF_tes)
+
+diabetes_results_RF_tes[1:5, ]
+
+# Confusion Matrix 
+conf_mat(diabetes_results_RF_tes, truth = Diabetes_012, estimate = .pred_class)     
+
+custom_metrics(diabetes_results_RF_tes,truth = Diabetes_012,estimate = .pred_class)
+
+#for validation 
+
+#for 600 tree
+RF_model <- rand_forest(
+  trees = 600) %>% 
+  set_engine("randomForest") %>% 
+  set_mode("classification")
+
+
+fitted_RF_model5val <- fit(RF_model, Diabetes_012~., data = Diabetes_train5)   # Fit the model
+
+## Class prediction
+pred_RF_val <- predict(fitted_RF_model5val,
+                       new_data = Diabetes_validate5,
+                       type = "class")
+
+pred_RF_val[1:5,]
+
+
+diabetes_results_RF_val <- Diabetes_validate5 %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_RF_val)
+
+diabetes_results_RF_val[1:5, ]
+
+# Confusion Matrix 
+conf_mat(diabetes_results_RF_val, truth = Diabetes_012, estimate = .pred_class)     
+
+custom_metrics(diabetes_results_RF_val,truth = Diabetes_012,estimate = .pred_class)
+```
+
+___
+___
+
+
+#Q6 According to the Validation set,estimate the best parameters of each model?
+
+
+```{r}
+
+# for logistic regression model:
+
+# define a grid of hyperparameters to search
+hyperparameter_grid <- expand.grid(
+  alpha = seq(0, 1, by = 0.1),  # hyperparameter 1
+  lambda = c(0.001, 0.01, 0.1)  #  hyperparameter 2
+)
+
+# create a train Control object for cross-validation
+control <- trainControl(
+  method = "cv",  
+  number = 5,  
+  search = "grid"  
+)
+
+# train the model with hyperparameter tuning
+model <- train(
+  Diabetes_012 ~ .,  
+  data = Diabetes_train5,  
+  method = "glmnet",  
+  trControl = control,  
+  tuneGrid = hyperparameter_grid  
+)
+
+# get the best hyperparameters
+best_hyperparameters <- model$bestTune
+
+# print the best hyperparameters
+print("Best Hyperparameters:")
+print(best_hyperparameters)
+
+
+
+
+#Create a plot to visualize the best hyperparameters.
+
+# Extract the results from hyperparameter tuning
+tuning_results <- model$results
+
+
+ggplot(tuning_results, aes(x = alpha, y = lambda, color = Accuracy)) +
+  geom_point() +
+  labs(title = "Hyperparameter Tuning Results",
+       x = "Alpha",
+       y = "Lambda",
+       color = "Accuracy") +
+  scale_color_gradient(low = "red", high = "green")  # Adjust color scale as needed
+
+
+#the code is designed to help us find the best combination of hyperparameters
+#for the "glmnet" model using cross-validation and this can lead to improved model performance and accuracy.
+
+#for random forest 
+
+# define the hyperparameter grid with mtry
+param_grid <- expand.grid(
+  mtry = c(2, 4, 6, 8)  # Number of features to consider at each split
+)
+
+# create a trainControl object for cross-validation 
+control <- trainControl(
+  method = "cv",  
+  number = 5,  
+  search = "grid"  
+)
+
+# tune the model with hyperparameter tuning
+model <- train(
+  Diabetes_012 ~ .,  
+  data = Diabetes_train5,  
+  method = "rf",  
+  trControl = control,  
+  tuneGrid = param_grid  
+)
+
+# get the best hyperparameters
+best_hyperparameters <- model$bestTune
+
+# print the best hyperparameters
+print("Best Hyperparameters:")
+print(best_hyperparameters)
+
+#in random forest and decision tree-based models, mtry is a hyperparameter that
+#controls the number of variables (features or predictors) considered for splitting
+#at each node of the tree. It is one of the factors that can significantly impact  
+#the performance and behavior of the model.
+
+
+# Get the tuning results
+tuning_results <- model$results
+
+# Create a scatterplot of mtry vs. performance
+
+ggplot(tuning_results, aes(x = as.factor(mtry), y = Accuracy)) +
+  geom_point() +
+  labs(
+    title = "Hyperparameter Tuning Results",
+    x = "mtry (Number of Features to Consider)",
+    y = "Accuracy"
+  ) +
+  theme_minimal()
+
+########################################################
+
+#for knn
+
+library(caret)
+
+# define the hyperparameter grid for KNN
+param_grid <- expand.grid(
+  k = 1:10  
+)
+
+# create a trainControl object for cross-validation
+control <- trainControl(
+  method = "cv",  
+  number = 5,  
+  search = "grid"  
+)
+
+# tune the KNN model with hyperparameter tuning
+model <- train(
+  Diabetes_012 ~ .,  
+  data = Diabetes_train5,  
+  method = "knn",  
+  trControl = control,  
+  tuneGrid = param_grid  
+)
+
+# get the best hyperparameters
+best_hyperparameters <- model$bestTune
+
+# print the best hyperparameters
+print("Best Hyperparameters:")
+print(best_hyperparameters)
+
+
+tuning_results <- model$results
+
+# Create a scatterplot of k vs. performance
+ggplot(tuning_results, aes(x = k, y = Accuracy, color = k)) +
+  geom_point() +
+  labs(title = "Hyperparameter Tuning Results for KNN",
+       x = "k (Number of Neighbors)",
+       y = "Root Mean Squared Error (RMSE)",
+       color = "k") +
+  scale_color_gradient(low = "red", high = "green") 
+
+
+################################################################################
+
+```
+
+
+___
+___
+#Q7 and Q8: Which variables do not play a role in predicting diabetes, and it is better to exclude them from the final model to avoid receiving unnecessary information from the user?
+
+To identify the features that play an important role, we can start by fitting a random forest model. Then, we can use the importance function to assess the **MeanDecreaseGini**. When a variable has the highest **MeanDecreaseGini** value, it signifies its importance in the model.
+Moreover, we can use **T_test** to select more important features. Smaller p_value shows the the more important role in the model.The significant measure also can help us in this case. 
+
+```{r}
+# Fit a Random Forest model
+rf_model <- randomForest(Diabetes_012 ~ ., data = Diabetes_train5, ntree = 100, importance = TRUE)
+
+# Get variable importance scores
+variable_importance <- importance(rf_model)
+# Create a bar plot of variable importance
+barplot(variable_importance[,'MeanDecreaseGini'], names.arg = rownames(variable_importance), horiz = TRUE, main = "Variable Importance")
+
+
+#MeanDecreaseGini is a measure of variable importance in a Random Forest model. the more
+#a variable contributes to reducing impurity, the more important it is considered.
+
+
+
+#the second method is t_test. 
+
+features <- c("HighBP", "HighChol", "CholCheck", "BMI", "Smoker", "Stroke",
+              "HeartDiseaseorAttack", "PhysActivity" , "Fruits","Veggies", 
+              "HvyAlcoholConsump","AnyHealthcare", "NoDocbcCost", "GenHlth", 
+              "MentHlth", "PhysHlth", "DiffWalk" ,"Sex" ,"Age","Education", "Income")
+
+
+# empty data frame to store results
+
+
+t_test_results <- data.frame(Feature = character(0), P_Value = numeric(0))
+
+for (feature in features) {
+  t_test_result <- t.test(get(feature) ~ Diabetes_012, data = Diabetes_train5)
+  t_test_results <- rbind(t_test_results, data.frame(Feature = feature, P_Value = t_test_result$p.value))
+}
+
+# Sort features 
+sorted_features <- t_test_results[order(t_test_results$P_Value, decreasing = TRUE), ]
+
+# Display the sorted features
+print(sorted_features)
+
+#the features with the smallest p-values are typically considered the most important
+
+```
+___
+___
+
+#Q9:Test your model on yourself and a few of your friends and report the risk of diabetes to them. Are the responses reasonable?
+For this question, we should prepare new data to test our model. new_test_data is data frame include features of 10 people. and the target value is Diabetes_012=c(1,0,0,0,1,1,1,0,1,0). We predict the target value based on logistic regression,random forest and KNN models. and the evaluation metrics point out that the logistic regression perform better than the two others. 
+
+```{r}
+new_test_data <- data.frame(Diabetes_012=c(1,0,0,0,1,1,1,0,1,0),
+                            HighBP = c(1,0,1,0,0,1,1,0,1,1), 
+                            HighChol =c(0,0,0,1,0,0,1,1,1,1),
+                            CholCheck = c(0,1,1,0,0,1,0,0,0,0), 
+                            BMI = c(21,40,32,27,35,18,38,43,37,23),
+                            Smoker =c(0,0,1,1,1,1,1,0,0,1) ,
+                            Stroke = c(0,0,0,0,1,0,0,1,0,0),
+                            HeartDiseaseorAttack = c(0,1,0,0,0,1,0,0,0,0), 
+                            PhysActivity = c(1,1,1,1,0,0,1,1,0,1) ,
+                            Fruits = c(1,0,1,1,1,1,1,0,1,1),
+                            Veggies = c(0,1,1,1,1,0,0,1,1,0), 
+                            HvyAlcoholConsump = c(0,0,0,1,1,0,0,1,1,0),
+                            AnyHealthcare = c(0,0,0,1,1,1,1,1,0,0) ,
+                            NoDocbcCost = c(0,0,0,0,1,1,0,1,0,0),
+                            GenHlth = c(5,4,2,1,1,3,5,2,3,5 ), 
+                            MentHlth = c(20,28,25,18,9,16,30,22,19,30),
+                            PhysHlth = c(25,30,26,18,20,30,29,15,21,10),
+                            DiffWalk = c(0,1,1,1,0,0,1,1,0,0) ,
+                            Sex = c(1,1,1,0,0,0,0,0,1,0) ,
+                            Age = c(28,18,36,25,29,30,27,19,35,38),
+                            Education = c(4,4,5,6,4,5,6,4,6,4), 
+                            Income = c(5,2,5,6,8,9,2,6,9,8))
+
+
+# Level the response variable
+new_test_data$Diabetes_012 <- factor(new_test_data$Diabetes_012, levels = c(0, 1))
+
+#logistic regression
+# Make predictions on the new test data
+pred_LR2_tes <- predict(fitted_logistic_model2, new_data = new_test_data, type = "class")
+
+diabetes_results_LR_tes <- new_test_data %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_LR2_tes)
+
+custom_metrics = metric_set(accuracy,sens)
+custom_metrics(diabetes_results_LR_tes,truth = Diabetes_012,estimate = .pred_class)
+
+
+#KNN model
+##Prediction
+pred_KNN <- predict(fitted_KNN_model,
+                    new_data = new_test_data,
+                    type = "class")
+
+pred_KNN[1:5,]
+
+diabetes_results_KNN <- new_test_data %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_KNN)
+
+custom_metrics(diabetes_results_KNN,truth = Diabetes_012,estimate = .pred_class)
+
+#random forest
+##Prediction
+pred_RF <- predict(fitted_RF_model5,
+                   new_data = new_test_data ,
+                   type = "class")
+
+diabetes_results_RF <- new_test_data %>%
+  select(Diabetes_012) %>%
+  bind_cols(pred_RF)
+
+custom_metrics(diabetes_results_RF,truth = Diabetes_012,estimate = .pred_class)
+diabetes_results_RF
+
+```
+___
+___
+
+#Q10: Can your model provide responses within a reasonable time ( for example less than one second)? Analyse your model in terms of processing volume, computational complexity and overall requirments?
+For the last question, we should measure the prediction time of each model by using system.time function.
+
+
+```{r}
+
+###logistic regression model
+print('Logistic Regression Time')
+system.time({
+  pred_LR2 <- predict(fitted_logistic_model2, new_data = Diabetes_test5, type = "class")
+})
+
+###for KNN model
+print('K Nearest Neighbors')
+system.time({
+  pred_KNN <- predict(fitted_KNN_model, new_data = Diabetes_test5, type = "class")
+})
+
+###for random forest model
+print('Random Forest Time')
+system.time({
+  pred_RF <- predict(fitted_RF_model5, new_data = Diabetes_test5, type = "class")
+})
+
+```
+
+As we can see logistic regression require less time to answer and predict rather the two others. Since, the KNN model needs to build a tree with highest order branches,it needs dramatically much time to perform and predict. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
