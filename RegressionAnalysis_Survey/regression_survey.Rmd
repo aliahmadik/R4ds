@@ -1,0 +1,174 @@
+---
+title: "Regression of Sample Survey"
+author: "Ali Ahmadi"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Set global chunk options
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Loading
+```{r}
+# Load the survey data from the specified file path
+data <- read.csv("D:\\R4ds/Advanced_Data_Analysis_R/Data/survey.csv")
+```
+
+# Check Data
+```{r}
+# Display column names, structure, and summary statistics of the dataset
+names(data)  # List column names
+str(data)    # Display structure of the dataset
+summary(data) # Summary statistics for each column
+```
+
+# Data Cleaning
+```{r}
+# Check for missing values
+sum(is.na(data)) # Count the number of NA values in the dataset
+
+# Convert 'weekend' column to a factor (categorical variable)
+data$weekend <- as.factor(data$weekend)
+levels(data$weekend) # Display levels of the 'weekend' factor
+```
+
+# Data Inspection
+```{r}
+# Visualize the distribution of numeric variables using histograms
+par(mfrow = c(2, 3)) # Set up a 2x3 grid for plots
+for (i in 4:9) {
+  hist(data[, i], ylab = "Counts", xlab = names(data)[i], 
+       main = paste0("Histogram of ", names(data)[i]))
+}
+```
+
+# Data Correlations
+```{r}
+# Compute and display the correlation matrix for selected numeric columns
+cor_table <- round(cor(data[, c(4:9)]), 2)
+cor_table
+```
+*Explanation*: The correlation matrix shows the strength of linear relationships between numeric variables. Values close to 1 or -1 indicate strong correlations.
+
+# Categorical Data
+```{r}
+# Display frequency tables for categorical variables
+table(data$weekend)   # Frequency of 'weekend' levels
+table(data$num.child) # Frequency of 'num.child' levels
+```
+
+# Simple Regression
+```{r}
+# Fit a simple linear regression model with 'wait' as the predictor for 'overall'
+m1 <- lm(overall ~ wait, data = data)
+summary(m1)$r.squared # R-squared value (proportion of variance explained)
+summary(m1)           # Full summary of the regression model
+```
+*Explanation*: This model examines the relationship between overall satisfaction (`overall`) and wait time (`wait`). The R-squared value indicates how much of the variation in `overall` is explained by `wait`.
+
+# F-Test and T-Test
+```{r}
+# Visualize residuals to check normality assumption
+hist(m1$residuals, probability = TRUE)
+lines(density(m1$residuals), col = "red") # Overlay density curve
+```
+*Explanation*: The histogram and density plot help assess whether the residuals follow a normal distribution.
+
+```{r}
+# Q-Q plot to check normality of residuals
+qqnorm(m1$residuals)
+qqline(m1$residuals, col = "red")
+```
+
+# Skewness and Kurtosis
+```{r}
+# Use the 'moments' library to test normality assumptions
+library("moments")
+# Jarque-Bera Test for skewness and kurtosis
+# good for data > 25
+jarque.test(m1$residuals)  # Test for skewness
+anscombe.test(m1$residuals) # Test for kurtosis
+```
+*Explanation*: These tests check whether the residuals meet the normality assumption. A p-value < 0.05 indicates that the normality assumption is violated.
+
+# Multiple Regression
+```{r}
+# Fit a multiple regression model with additional predictors
+m2 <- lm(overall ~ rides + games + wait + clean, data = data)
+summary(m2)$r.squared # R-squared value
+summary(m2)           # Full summary of the regression model
+```
+*Explanation*: This model includes multiple predictors to explain `overall` satisfaction. The R-squared value indicates the proportion of variance explained by all predictors combined.
+
+# Multicollinearity Check
+```{r}
+# Calculate Variance Inflation Factor (VIF) to check for multicollinearity
+library(car)
+vif(m2)
+```
+*Explanation*: A VIF > 10 indicates high multicollinearity, which can affect the reliability of regression coefficients.
+
+# Prediction
+```{r}
+# Predict 'overall' satisfaction using the coefficients of m2
+m2$coefficients %*% c(1, 2, 3, 1, 9) # Example prediction
+```
+
+# Standardized Regression
+```{r}
+# Standardize numeric variables and fit a regression model
+df <- as.data.frame(scale(data[, c(4:9)]))
+m3 <- lm(overall ~ ., data = df)
+summary(m3)$r.squared # R-squared value
+summary(m3)           # Full summary of the regression model
+```
+*Explanation*: Standardizing variables ensures that all predictors are on the same scale, which is useful for comparing coefficients.
+
+# Adding Categorical Data
+```{r}
+# Include categorical variables in the regression model
+data$weekend <- as.factor(data$weekend)
+data$num.child <- as.factor(data$num.child)
+m4 <- lm(overall ~ ., data = data)
+summary(m4)
+```
+
+# Interaction Effects
+```{r}
+# Fit a model with interaction terms
+m7 <- lm(overall ~ distance + rides + games + wait + clean +
+           weekend + num.child +
+           rides:num.child + games:num.child + wait:num.child +
+           clean:num.child + rides:weekend + games:weekend +
+           wait:weekend + clean:weekend, data = data)
+summary(m7)
+vif(m7) # Check for multicollinearity
+```
+*Explanation*: Interaction terms allow us to examine how the effect of one variable depends on the level of another variable.
+
+# Final Model
+```{r}
+# Fit the final regression model
+m8 <- lm(overall ~ rides + games + wait + clean + 
+           num.child + wait:num.child, data = data)
+summary(m8)
+```
+*Explanation*: The final model includes significant predictors and interaction terms to explain `overall` satisfaction.
+
+# Model Diagnostics
+```{r}
+# Diagnostic plots for the final model
+plot(m8)
+
+# Prediction vs Actual
+plot(data$overall, fitted(m8), col = "blue",
+     xlim = c(0, 10), ylim = c(0, 10),
+     xlab = "Actual Overall Satisfaction", ylab = "Fitted Overall Satisfaction")
+abline(a = 0, b = 1, col = "red")
+```
+*Explanation*: Diagnostic plots help assess the model's assumptions, and the prediction vs. actual plot shows how well the model fits the data.
+
