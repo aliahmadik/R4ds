@@ -7,10 +7,6 @@ This project performs regression analysis on survey data collected from a recrea
 - [Dataset](#dataset)
 - [Analysis Steps](#analysis-steps)
 - [Requirements](#requirements)
-- [How to Run](#how-to-run)
-- [Key Outputs](#key-outputs)
-- [License](#license)
-
 ---
 
 ## Overview
